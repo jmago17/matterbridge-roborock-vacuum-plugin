@@ -187,7 +187,10 @@ describe('module.ts - complete coverage', () => {
 
 			const mockRoborockService = asPartial<RoborockService>({
 				initializeMessageClientForLocal: vi.fn().mockResolvedValue(true),
-				getMapInfo: vi.fn().mockResolvedValue({ allRooms: [] }),
+												setDeviceHomeId: vi.fn(),
+												hasPhysicalAreas: vi.fn().mockReturnValue(true),
+												scheduleAreaResolutionRetry: vi.fn(),
+												getMapInfo: vi.fn().mockResolvedValue({ allRooms: [] }),
 				setSupportedAreas: vi.fn(),
 				setSupportedAreaIndexMap: vi.fn(),
 				setDeviceNotify: vi.fn().mockImplementation((cb: (payload: unknown) => void) => {
@@ -287,7 +290,10 @@ describe('module.ts - complete coverage', () => {
 				initializeMessageClientForLocal: vi
 					.fn()
 					.mockImplementation((d: Device) => Promise.resolve(d.duid === 'device1')),
-				getMapInfo: vi.fn().mockResolvedValue({ allRooms: [] }),
+												setDeviceHomeId: vi.fn(),
+												hasPhysicalAreas: vi.fn().mockReturnValue(true),
+												scheduleAreaResolutionRetry: vi.fn(),
+												getMapInfo: vi.fn().mockResolvedValue({ allRooms: [] }),
 				setSupportedAreas: vi.fn(),
 				setSupportedAreaIndexMap: vi.fn(),
 				setDeviceNotify: vi.fn(),
@@ -359,7 +365,10 @@ describe('module.ts - complete coverage', () => {
 
 			const mockRoborockService = asPartial<RoborockService>({
 				initializeMessageClientForLocal: vi.fn().mockResolvedValue(true),
-				getMapInfo: vi.fn().mockResolvedValue({ allRooms: [] }),
+												setDeviceHomeId: vi.fn(),
+												hasPhysicalAreas: vi.fn().mockReturnValue(true),
+												scheduleAreaResolutionRetry: vi.fn(),
+												getMapInfo: vi.fn().mockResolvedValue({ allRooms: [] }),
 				setSupportedAreas: vi.fn(),
 				setSupportedAreaIndexMap: vi.fn(),
 				setDeviceNotify: vi.fn(),
@@ -424,7 +433,10 @@ describe('module.ts - complete coverage', () => {
 
 			const mockRoborockService = asPartial<RoborockService>({
 				initializeMessageClientForLocal: vi.fn().mockResolvedValue(true),
-				getMapInfo: vi.fn().mockResolvedValue({ allRooms: [] }),
+												setDeviceHomeId: vi.fn(),
+												hasPhysicalAreas: vi.fn().mockReturnValue(true),
+												scheduleAreaResolutionRetry: vi.fn(),
+												getMapInfo: vi.fn().mockResolvedValue({ allRooms: [] }),
 				setSupportedAreas: vi.fn(),
 				setSupportedAreaIndexMap: vi.fn(),
 				setDeviceNotify: vi.fn(),
@@ -495,7 +507,10 @@ describe('module.ts - complete coverage', () => {
 
 			const mockRoborockService = asPartial<RoborockService>({
 				initializeMessageClientForLocal: vi.fn().mockResolvedValue(true),
-				getMapInfo: vi.fn().mockResolvedValue(mockMapInfo),
+												setDeviceHomeId: vi.fn(),
+												hasPhysicalAreas: vi.fn().mockReturnValue(true),
+												scheduleAreaResolutionRetry: vi.fn(),
+												getMapInfo: vi.fn().mockResolvedValue(mockMapInfo),
 				getRoomMap: vi.fn().mockResolvedValue([]),
 				setSupportedAreas: vi.fn(),
 				setSupportedAreaIndexMap: vi.fn(),
@@ -554,7 +569,10 @@ describe('module.ts - complete coverage', () => {
 
 			const mockRoborockService = {
 				initializeMessageClientForLocal: vi.fn().mockResolvedValue(true),
-				getMapInfo: vi.fn().mockResolvedValue(mockMapInfo),
+												setDeviceHomeId: vi.fn(),
+												hasPhysicalAreas: vi.fn().mockReturnValue(true),
+												scheduleAreaResolutionRetry: vi.fn(),
+												getMapInfo: vi.fn().mockResolvedValue(mockMapInfo),
 				getRoomMap: vi.fn().mockResolvedValue([]),
 				setSupportedAreas: vi.fn(),
 				setSupportedAreaIndexMap: vi.fn(),
