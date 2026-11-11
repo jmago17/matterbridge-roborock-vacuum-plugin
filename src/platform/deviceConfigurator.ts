@@ -102,6 +102,15 @@ export class DeviceConfigurator {
 
 		const homeData = vacuum.store.homeData;
 		roborockService.setDeviceRooms(vacuum.duid, homeData.rooms);
+		roborockService.setDeviceHomeId(vacuum.duid, homeData.id);
+
+		if (vacuum.online === false) {
+			this.log.warn(
+				`Device ${vacuum.name} is reported OFFLINE by the Roborock cloud for this account/region. ` +
+					'Map and room queries will time out. If the robot works in the Roborock app, it is probably bound to a ' +
+					'different account or region than the one configured in this plugin.',
+			);
+		}
 		const homeInfo = new HomeEntity(homeData.id, homeData.name, RoomMap.empty(), MapInfo.empty(), -1);
 
 		const resolved = await roborockService.resolveInitialAreas(vacuum.duid);
@@ -126,6 +135,13 @@ export class DeviceConfigurator {
 			robot.updateAttribute(ServiceArea.id, 'supportedMaps', allMaps, this.log);
 			robot.updateAttribute(ServiceArea.id, 'supportedAreas', [...areas, ...routines], this.log);
 		});
+
+		if (!roborockService.hasPhysicalAreas(vacuum.duid)) {
+			this.log.warn(
+				`Device ${vacuum.name}: no room mapping received at startup, retrying in background (rooms will be published when they arrive)`,
+			);
+			roborockService.scheduleAreaResolutionRetry(vacuum.duid);
+		}
 
 		const behaviorHandler = configureBehavior(
 			vacuum.specs.model,

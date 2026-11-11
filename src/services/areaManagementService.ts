@@ -18,6 +18,9 @@ import { HomeModelMapper, RawRoomMappingData, RoomDto } from '../roborockCommuni
 import { Scene } from '../roborockCommunication/models/index.js';
 import { MessageRoutingService } from './index.js';
 
+/** Background retry schedule for room resolution when startup queries return nothing. */
+export const AREA_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 300_000, 600_000];
+
 /** Manages cleaning areas, rooms, maps, and scenes. */
 export class AreaManagementService {
 	private supportedAreas = new Map<string, ServiceArea.Area[]>();
@@ -34,6 +37,10 @@ export class AreaManagementService {
 	private mapInfoCache = new Map<string, MapInfo>();
 	private v1RoomResolutionCache = new Map<string, { segmentId: number; resolvedAtMs: number }>();
 	private v1PendingResolution = new Map<string, { segmentId: number; consecutiveCount: number }>();
+
+	private areaRetryTimers = new Map<string, NodeJS.Timeout>();
+	private deviceHomeIds = new Map<string, number>();
+	private roomNameRefreshAttempted = new Set<string>();
 
 	private static readonly V1_SEGMENT_CONFIRMATION_THRESHOLD = 2;
 
@@ -58,6 +65,10 @@ export class AreaManagementService {
 
 	public setDeviceRooms(duid: string, rooms: RoomDto[]): void {
 		this.deviceRooms.set(duid, rooms);
+	}
+
+	public getDeviceRooms(duid: string): RoomDto[] | undefined {
+		return this.deviceRooms.get(duid);
 	}
 
 	public setSelectedAreas(duid: string, selectedAreas: number[]): void {
@@ -157,6 +168,10 @@ export class AreaManagementService {
 		const mapInfo = await this.serviceRouting.getMapInfo(duid);
 		this.mapInfoCache.set(duid, mapInfo);
 		if (mapInfo.hasRooms) {
+			await this.refreshRoomNamesIfNeeded(
+				duid,
+				mapInfo.allRooms.map((r) => String(r.iot_name_id)),
+			);
 			const rooms = this.deviceRooms.get(duid) ?? [];
 			const roomMappings = mapInfo.allRooms.map((dto) => HomeModelMapper.toRoomMapping(dto, rooms));
 			const homeEntity = new HomeEntity(0, '', new RoomMap(roomMappings), mapInfo, 0);
@@ -226,6 +241,12 @@ export class AreaManagementService {
 		}
 
 		const rawData = await this.serviceRouting.getRoomMap(duid, activeMap);
+		if (rawData && rawData.length > 0) {
+			await this.refreshRoomNamesIfNeeded(
+				duid,
+				rawData.map((entry) => String(entry[1])),
+			);
+		}
 		return this.applyRoomMapData(duid, rawData, expectedMapId);
 	}
 
@@ -358,6 +379,108 @@ export class AreaManagementService {
 		this.setSupportedAreas(duid, sortedAreas);
 	}
 
+	/** True when at least one physical (non-routine) room area is published for the device. */
+	public hasPhysicalAreas(duid: string): boolean {
+		// getSupportedAreas() publishes an "Unknown - No Room" placeholder when the room map is empty.
+		return this.getSupportedAreas(duid).some(
+			(a) =>
+				a.mapId !== null &&
+				this.isPhysicalMapId(a.mapId) &&
+				!(a.areaInfo.locationInfo?.locationName ?? '').startsWith('Unknown - '),
+		);
+	}
+
+	/**
+	 * Retry the request/response room resolution (get_multi_maps_list + get_room_mapping) in the
+	 * background until physical rooms are known. Startup resolution can time out (MQTT only, robot
+	 * busy/asleep, broker hiccup); 1.1.9 then kept an empty area list until the next restart because
+	 * the periodic refresh is fire-and-forget when live map updates are enabled.
+	 * Each successful apply notifies the registered areas listener, which updates the Matter attributes.
+	 */
+	public scheduleAreaResolutionRetry(duid: string, delaysMs: number[] = AREA_RETRY_DELAYS_MS): void {
+		this.cancelAreaResolutionRetry(duid);
+		if (this.hasPhysicalAreas(duid) || delaysMs.length === 0) {
+			return;
+		}
+		const [delay, ...rest] = delaysMs;
+		const handle = setTimeout(() => {
+			this.areaRetryTimers.delete(duid);
+			void this.retryAreaResolution(duid).then((resolved) => {
+				if (!resolved && rest.length > 0) {
+					this.scheduleAreaResolutionRetry(duid, rest);
+				} else if (!resolved) {
+					this.logger.warn(
+						`AreaManagementService - rooms still unknown for ${duid} after all retries; is the robot online in this Roborock account/region?`,
+					);
+				}
+			});
+		}, delay);
+		handle.unref?.();
+		this.areaRetryTimers.set(duid, handle);
+	}
+
+	public cancelAreaResolutionRetry(duid: string): void {
+		const handle = this.areaRetryTimers.get(duid);
+		if (handle) {
+			clearTimeout(handle);
+			this.areaRetryTimers.delete(duid);
+		}
+	}
+
+	private async retryAreaResolution(duid: string): Promise<boolean> {
+		if (this.hasPhysicalAreas(duid)) {
+			return true;
+		}
+		this.logger.info(`AreaManagementService - retrying room mapping for ${duid}`);
+		try {
+			await this.fetchAndApplyMapInfo(duid);
+			if (!this.hasPhysicalAreas(duid)) {
+				await this.fetchAndApplyRoomMap(duid, -1);
+			}
+		} catch (err) {
+			this.logger.warn(`AreaManagementService - room mapping retry failed for ${duid}: ${String(err)}`);
+		}
+		const resolved = this.hasPhysicalAreas(duid);
+		if (resolved) {
+			this.logger.notice(
+				`AreaManagementService - rooms resolved for ${duid}: ${this.getSupportedAreas(duid)
+					.map((a) => a.areaInfo.locationInfo?.locationName)
+					.join(', ')}`,
+			);
+		}
+		return resolved;
+	}
+
+	/**
+	 * Refresh room names from `/user/homes/{homeId}/rooms` when the device reports segment iot ids
+	 * that are missing from the cached home data (same strategy as python-roborock's RoomsTrait).
+	 */
+	private async refreshRoomNamesIfNeeded(duid: string, iotIds: string[]): Promise<void> {
+		const homeId = this.deviceHomeIds.get(duid);
+		if (!this.iotApi || homeId === undefined || iotIds.length === 0) {
+			return;
+		}
+		const known = new Set((this.deviceRooms.get(duid) ?? []).map((r) => String(r.id)));
+		const unknown = iotIds.filter((id) => !known.has(id));
+		if (unknown.length === 0 || unknown.every((id) => this.roomNameRefreshAttempted.has(`${duid}:${id}`))) {
+			return;
+		}
+		unknown.forEach((id) => this.roomNameRefreshAttempted.add(`${duid}:${id}`));
+		try {
+			const rooms = await this.iotApi.getRooms(homeId);
+			if (rooms && rooms.length > 0) {
+				this.logger.debug(`AreaManagementService - refreshed ${rooms.length} room names for ${duid}`);
+				this.deviceRooms.set(duid, rooms);
+			}
+		} catch (err) {
+			this.logger.debug(`AreaManagementService - room names refresh failed for ${duid}: ${String(err)}`);
+		}
+	}
+
+	public setDeviceHomeId(duid: string, homeId: number): void {
+		this.deviceHomeIds.set(duid, homeId);
+	}
+
 	public startPeriodicRefresh(duid: string, intervalMs = 5 * 60 * 1000): void {
 		this.stopPeriodicRefresh(duid);
 		const handle = setInterval(() => {
@@ -427,6 +550,11 @@ export class AreaManagementService {
 		for (const duid of this.refreshIntervals.keys()) {
 			this.stopPeriodicRefresh(duid);
 		}
+		for (const duid of [...this.areaRetryTimers.keys()]) {
+			this.cancelAreaResolutionRetry(duid);
+		}
+		this.deviceHomeIds.clear();
+		this.roomNameRefreshAttempted.clear();
 		this.supportedAreas.clear();
 		this.supportedMaps.clear();
 		this.supportedRoutines.clear();

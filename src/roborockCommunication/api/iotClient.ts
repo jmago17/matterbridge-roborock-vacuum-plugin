@@ -6,6 +6,7 @@ import * as AxiosLogger from 'axios-logger';
 import axiosRetry from 'axios-retry';
 import { AnsiLogger, debugStringify } from 'matterbridge/logger';
 
+import { RoomDto } from '../models/home/index.js';
 import { ApiResponse, Home, Scene, UserData } from '../models/index.js';
 
 export class RoborockIoTApi {
@@ -178,6 +179,22 @@ export class RoborockIoTApi {
 			return undefined;
 		} catch (error) {
 			this.logger.error(`[getHomev3] Failed: ${error ? debugStringify(error) : 'unknown'}`);
+			return undefined;
+		}
+	}
+
+	/** Read-only: current room names of a home (same endpoint python-roborock uses to backfill names). */
+	public async getRooms(homeId: number): Promise<RoomDto[] | undefined> {
+		try {
+			const result = await this.api.get(`user/homes/${homeId}/rooms`);
+			const apiResponse: ApiResponse<RoomDto[]> = result.data;
+			if (Array.isArray(apiResponse.result)) {
+				return apiResponse.result;
+			}
+			this.logger.error('[getRooms] Failed to retrieve rooms');
+			return undefined;
+		} catch (error) {
+			this.logger.error(`[getRooms] Failed: ${error ? debugStringify(error) : 'unknown'}`);
 			return undefined;
 		}
 	}

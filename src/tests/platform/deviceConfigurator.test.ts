@@ -896,6 +896,73 @@ describe('DeviceConfigurator', () => {
 			expect(roborockService.registerAreasListener).toHaveBeenCalledWith(device.duid, expect.any(Function));
 		});
 
+		it('should schedule a background room retry when no physical rooms were resolved at startup', async () => {
+			const device = makeMockDevice('duid-1');
+			registry = createMockDeviceRegistry({
+				hasDevices: vi.fn().mockReturnValue(true),
+				getAllDevices: vi.fn().mockReturnValue([device]),
+				robotsMap: new Map(),
+			});
+			roborockService = createMockRoborockService({
+				setDeviceNotify: vi.fn(),
+				registerAreasListener: vi.fn(),
+				startPeriodicAreaRefresh: vi.fn(),
+				resolveInitialAreas: vi.fn().mockResolvedValue({ supportedAreas: [], supportedMaps: [] }),
+				initializeMessageClientForLocal: vi.fn().mockResolvedValue(false),
+				hasPhysicalAreas: vi.fn().mockReturnValue(false),
+				scheduleAreaResolutionRetry: vi.fn(),
+				setDeviceHomeId: vi.fn(),
+			});
+			configurator = new DeviceConfigurator(platform, configManager, registry, () => platformRunner, snackbarMessage, log);
+
+			await configurator.onConfigureDevice(roborockService);
+
+			expect(roborockService.setDeviceHomeId).toHaveBeenCalledWith(device.duid, 1);
+			expect(roborockService.scheduleAreaResolutionRetry).toHaveBeenCalledWith(device.duid);
+		});
+
+		it('should not schedule a room retry when rooms were resolved at startup', async () => {
+			const device = makeMockDevice('duid-1');
+			registry = createMockDeviceRegistry({
+				hasDevices: vi.fn().mockReturnValue(true),
+				getAllDevices: vi.fn().mockReturnValue([device]),
+				robotsMap: new Map(),
+			});
+			roborockService = createMockRoborockService({
+				setDeviceNotify: vi.fn(),
+				registerAreasListener: vi.fn(),
+				startPeriodicAreaRefresh: vi.fn(),
+				initializeMessageClientForLocal: vi.fn().mockResolvedValue(true),
+				hasPhysicalAreas: vi.fn().mockReturnValue(true),
+				scheduleAreaResolutionRetry: vi.fn(),
+			});
+			configurator = new DeviceConfigurator(platform, configManager, registry, () => platformRunner, snackbarMessage, log);
+
+			await configurator.onConfigureDevice(roborockService);
+
+			expect(roborockService.scheduleAreaResolutionRetry).not.toHaveBeenCalled();
+		});
+
+		it('should warn when the cloud reports the device offline for the configured account', async () => {
+			const device = asPartial<Device>({ ...makeMockDevice('duid-1'), online: false });
+			registry = createMockDeviceRegistry({
+				hasDevices: vi.fn().mockReturnValue(true),
+				getAllDevices: vi.fn().mockReturnValue([device]),
+				robotsMap: new Map(),
+			});
+			roborockService = createMockRoborockService({
+				setDeviceNotify: vi.fn(),
+				registerAreasListener: vi.fn(),
+				startPeriodicAreaRefresh: vi.fn(),
+				initializeMessageClientForLocal: vi.fn().mockResolvedValue(true),
+			});
+			configurator = new DeviceConfigurator(platform, configManager, registry, () => platformRunner, snackbarMessage, log);
+
+			await configurator.onConfigureDevice(roborockService);
+
+			expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('OFFLINE by the Roborock cloud'));
+		});
+
 		it('should call startPeriodicAreaRefresh for successfully configured devices', async () => {
 			const device = makeMockDevice('duid-1');
 			const mockRobot = asPartial<RoborockVacuumCleaner>({ device });

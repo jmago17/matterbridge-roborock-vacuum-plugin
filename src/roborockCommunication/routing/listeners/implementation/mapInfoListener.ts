@@ -67,7 +67,7 @@ export class MapInfoListener implements AbstractMessageListener {
 		this.logger.debug(`[${this.duid}] MapInfoListener: V1 map info push received (${mapInfo.maps.length} maps)`);
 
 		if (mapInfo.hasRooms) {
-			const roomMappings = mapInfo.allRooms.map((dto) => HomeModelMapper.toRoomMapping(dto, this.rooms));
+			const roomMappings = mapInfo.allRooms.map((dto) => HomeModelMapper.toRoomMapping(dto, this.currentRooms()));
 			this.updateAreas(new RoomMap(roomMappings), mapInfo);
 		}
 	}
@@ -86,7 +86,7 @@ export class MapInfoListener implements AbstractMessageListener {
 			dps.result,
 			resolvedMapId,
 			storedMapInfo,
-			this.rooms,
+			this.currentRooms(),
 		);
 		this.updateAreas(new RoomMap(roomMappings), storedMapInfo, resolvedMapId);
 	}
@@ -191,7 +191,7 @@ export class MapInfoListener implements AbstractMessageListener {
 				iot_map_id: 0,
 				iot_name:
 					normalizeB01RoomName(r.roomName, r.roomTypeId, r.roomId) ||
-					this.rooms.find((rd) => rd.id === r.roomId)?.name ||
+					this.currentRooms().find((rd) => rd.id === r.roomId)?.name ||
 					`Room ${r.roomId}`,
 				areaType: roomTypeIdToAreaTag(r.roomTypeId ?? 0),
 			}));
@@ -235,6 +235,12 @@ export class MapInfoListener implements AbstractMessageListener {
 				`[${this.duid}] MapInfoListener: failed to parse V1 map binary: ${errorMsg}${causeMsg ? ` | ${causeMsg}` : ''}`,
 			);
 		}
+	}
+
+	/** Prefer room names refreshed by AreaManagementService (cloud /rooms) over the startup snapshot. */
+	private currentRooms(): RoomDto[] {
+		const refreshed = this.areaService.getDeviceRooms?.(this.duid);
+		return refreshed && refreshed.length > 0 ? refreshed : this.rooms;
 	}
 
 	private updateAreas(roomMap: RoomMap, mapInfo: MapInfo, mergeMapId?: number): void {

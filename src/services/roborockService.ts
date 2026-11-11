@@ -219,6 +219,21 @@ export class RoborockService {
 		return this.areaService.getSupportedMaps(duid);
 	}
 
+	/** Retry room resolution in the background until physical rooms are known. */
+	public scheduleAreaResolutionRetry(duid: string, delaysMs?: number[]): void {
+		this.areaService.scheduleAreaResolutionRetry(duid, delaysMs);
+	}
+
+	/** True when at least one physical room (not a routine/placeholder) is published. */
+	public hasPhysicalAreas(duid: string): boolean {
+		return this.areaService.hasPhysicalAreas(duid);
+	}
+
+	/** Remember the Roborock home id of a device (used to refresh room names). */
+	public setDeviceHomeId(duid: string, homeId: number): void {
+		this.areaService.setDeviceHomeId(duid, homeId);
+	}
+
 	/** Start periodic area refresh (getMapInfo) on a timer. */
 	public startPeriodicAreaRefresh(duid: string, intervalMs?: number): void {
 		this.areaService.startPeriodicRefresh(duid, intervalMs);
