@@ -65,18 +65,37 @@ describe('AreaManagementService - room resolution retry', () => {
 	const routineArea: ServiceArea.Area = {
 		areaId: 9252134,
 		mapId: ROUTINE_MAP_ID,
-		areaInfo: { locationInfo: { locationName: 'Limpieza completa', floorNumber: null, areaType: null }, landmarkInfo: null },
+		areaInfo: {
+			locationInfo: { locationName: 'Limpieza completa', floorNumber: null, areaType: null },
+			landmarkInfo: null,
+		},
 	};
 
 	let logger: any;
-	let routing: { getMapInfo: ReturnType<typeof vi.fn>; getRoomMap: ReturnType<typeof vi.fn>; switchMap: ReturnType<typeof vi.fn> };
-	let iotApi: { getRooms: ReturnType<typeof vi.fn>; getScenes: ReturnType<typeof vi.fn>; startScene: ReturnType<typeof vi.fn> };
+	let routing: {
+		supportsCurrentMapQuery: ReturnType<typeof vi.fn>;
+		getCurrentMapId: ReturnType<typeof vi.fn>;
+		getMapInfo: ReturnType<typeof vi.fn>;
+		getRoomMap: ReturnType<typeof vi.fn>;
+		switchMap: ReturnType<typeof vi.fn>;
+	};
+	let iotApi: {
+		getRooms: ReturnType<typeof vi.fn>;
+		getScenes: ReturnType<typeof vi.fn>;
+		startScene: ReturnType<typeof vi.fn>;
+	};
 	let service: AreaManagementService;
 
 	beforeEach(() => {
 		vi.useFakeTimers();
 		logger = { debug: vi.fn(), info: vi.fn(), notice: vi.fn(), warn: vi.fn(), error: vi.fn() };
-		routing = { getMapInfo: vi.fn(), getRoomMap: vi.fn(), switchMap: vi.fn() };
+		routing = {
+			supportsCurrentMapQuery: vi.fn().mockReturnValue(true),
+			getCurrentMapId: vi.fn().mockResolvedValue(0),
+			getMapInfo: vi.fn(),
+			getRoomMap: vi.fn(),
+			switchMap: vi.fn(),
+		};
 		iotApi = { getRooms: vi.fn(), getScenes: vi.fn(), startScene: vi.fn() };
 		// Plugin options used by Josu: live map updates ON, multiple maps OFF.
 		service = new AreaManagementService(logger, routing as any, true, false);
@@ -166,7 +185,7 @@ describe('AreaManagementService - room resolution retry', () => {
 		expect(areaNames(service.getSupportedAreas(duid))).toContain('Salón');
 	});
 
-	it('gives up after the last retry and logs a hint about account/region', async () => {
+	it('gives up after the last retry and logs an unresolved-query warning', async () => {
 		routing.getMapInfo.mockResolvedValue(MapInfo.empty());
 		routing.getRoomMap.mockResolvedValue([]);
 
@@ -192,7 +211,10 @@ describe('AreaManagementService - room resolution retry', () => {
 			{
 				areaId: 1,
 				mapId: 0,
-				areaInfo: { locationInfo: { locationName: 'Unknown - No Room', floorNumber: 0, areaType: null }, landmarkInfo: null },
+				areaInfo: {
+					locationInfo: { locationName: 'Unknown - No Room', floorNumber: 0, areaType: null },
+					landmarkInfo: null,
+				},
 			},
 			routineArea,
 		]);

@@ -30,6 +30,7 @@ export interface AbstractMessageDispatcher {
 	getHomeMap(duid: string): Promise<MapRoomResponse>;
 	getMapInfo(duid: string): Promise<MapInfo>;
 	getMapInfoV2(duid: string): Promise<void>;
+	getCurrentMapId?(duid: string): Promise<number | undefined>;
 	getRoomMap(duid: string, activeMap: number): Promise<RawRoomMappingData>;
 	getRoomMapV2(duid: string, activeMap: number): Promise<void>;
 	getSerialNumber(duid: string): Promise<string | undefined>;

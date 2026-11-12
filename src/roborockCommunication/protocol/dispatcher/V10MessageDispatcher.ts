@@ -69,7 +69,7 @@ export class V10MessageDispatcher implements AbstractMessageDispatcher {
 	}
 
 	public async getMapInfo(duid: string): Promise<MapInfo> {
-		const request = new RequestMessage({ method: 'get_multi_maps_list' });
+		const request = new RequestMessage({ method: 'get_multi_maps_list', params: [], forceMqtt: true });
 		const response = await this.client.query<MultipleMapDto>(
 			duid,
 			request,
@@ -79,11 +79,11 @@ export class V10MessageDispatcher implements AbstractMessageDispatcher {
 	}
 
 	public getMapInfoV2(duid: string): Promise<void> {
-		return this.client.send(duid, new RequestMessage({ method: 'get_multi_maps_list' }));
+		return this.client.send(duid, new RequestMessage({ method: 'get_multi_maps_list', params: [], forceMqtt: true }));
 	}
 
 	public async getRoomMap(duid: string, _activeMap: number): Promise<RawRoomMappingData> {
-		const request = new RequestMessage({ method: 'get_room_mapping' });
+		const request = new RequestMessage({ method: 'get_room_mapping', params: [] });
 		const response = await this.client.query<RawRoomMappingData>(duid, request, (msg) => {
 			if (!msg.body) return undefined;
 			let dps = msg.get(Protocol.rpc_response) as DpsPayload;
@@ -94,8 +94,22 @@ export class V10MessageDispatcher implements AbstractMessageDispatcher {
 		return response ?? [];
 	}
 
+	/** Read only, used AFTER room mapping when map-list discovery is unavailable. */
+	public async getCurrentMapId(duid: string): Promise<number | undefined> {
+		const request = new RequestMessage({ method: 'get_status', params: [] });
+		const status = await this.client.query<{ map_status?: number }>(
+			duid,
+			request,
+			(msg) => parseV1Result(msg, request.messageId) as { map_status?: number } | undefined,
+		);
+		const mapStatus = status?.map_status;
+		return typeof mapStatus === 'number' && Number.isSafeInteger(mapStatus) && mapStatus >= 0 && mapStatus <= 0xffffffff
+			? mapStatus >>> 2
+			: undefined;
+	}
+
 	public getRoomMapV2(duid: string, _activeMap: number): Promise<void> {
-		return this.client.send(duid, new RequestMessage({ method: 'get_room_mapping' }));
+		return this.client.send(duid, new RequestMessage({ method: 'get_room_mapping', params: [] }));
 	}
 
 	public switchMap(duid: string, mapId: number): Promise<void> {

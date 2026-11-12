@@ -35,10 +35,13 @@ export class AreaManagementService {
 	private deviceRooms = new Map<string, RoomDto[]>();
 	private iotApi: RoborockIoTApi | undefined;
 	private mapInfoCache = new Map<string, MapInfo>();
+	private currentMapFallbackDevices = new Set<string>();
 	private v1RoomResolutionCache = new Map<string, { segmentId: number; resolvedAtMs: number }>();
 	private v1PendingResolution = new Map<string, { segmentId: number; consecutiveCount: number }>();
 
 	private areaRetryTimers = new Map<string, NodeJS.Timeout>();
+	// Tokens also cover requests in flight, after their timer has fired.
+	private areaRetryTokens = new Map<string, object>();
 	private deviceHomeIds = new Map<string, number>();
 	private roomNameRefreshAttempted = new Set<string>();
 
@@ -160,18 +163,24 @@ export class AreaManagementService {
 		return this.supportedRoutines.get(duid);
 	}
 
-	private async fetchAndApplyMapInfo(duid: string): Promise<MapInfo | undefined> {
+	private async fetchAndApplyMapInfo(duid: string, isActive: () => boolean = () => true): Promise<MapInfo | undefined> {
 		if (!this.serviceRouting) {
 			throw new DeviceError('Service routing not initialized', duid);
 		}
 
 		const mapInfo = await this.serviceRouting.getMapInfo(duid);
+		if (!isActive()) return undefined;
+		// An empty timeout response must not discard a previously verified map.
+		if (mapInfo.maps.length === 0) return mapInfo;
+		this.currentMapFallbackDevices.delete(duid);
 		this.mapInfoCache.set(duid, mapInfo);
 		if (mapInfo.hasRooms) {
 			await this.refreshRoomNamesIfNeeded(
 				duid,
-				mapInfo.allRooms.map((r) => String(r.iot_name_id)),
+				mapInfo.allRooms.map((r) => r.iot_name_id),
+				isActive,
 			);
+			if (!isActive()) return undefined;
 			const rooms = this.deviceRooms.get(duid) ?? [];
 			const roomMappings = mapInfo.allRooms.map((dto) => HomeModelMapper.toRoomMapping(dto, rooms));
 			const homeEntity = new HomeEntity(0, '', new RoomMap(roomMappings), mapInfo, 0);
@@ -235,18 +244,43 @@ export class AreaManagementService {
 		duid: string,
 		activeMap: number,
 		expectedMapId?: number,
+		isActive: () => boolean = () => true,
 	): Promise<number | undefined> {
 		if (!this.serviceRouting) {
 			throw new DeviceError('Service routing not initialized', duid);
 		}
 
+		// Always ask for rooms, even if map-list discovery failed.
 		const rawData = await this.serviceRouting.getRoomMap(duid, activeMap);
-		if (rawData && rawData.length > 0) {
-			await this.refreshRoomNamesIfNeeded(
+		if (!isActive() || !rawData?.length) return undefined;
+		if (
+			((this.mapInfoCache.get(duid)?.maps.length ?? 0) === 0 || this.currentMapFallbackDevices.has(duid)) &&
+			expectedMapId === undefined &&
+			this.serviceRouting.supportsCurrentMapQuery(duid)
+		) {
+			// V1 tuples contain segment/name/tag, NOT a map id. Never guess floor 0.
+			const currentMapId = await this.serviceRouting.getCurrentMapId(duid);
+			if (!isActive() || currentMapId === undefined || !this.isPhysicalMapId(currentMapId)) return undefined;
+			this.mapInfoCache.set(
 				duid,
-				rawData.map((entry) => String(entry[1])),
+				new MapInfo({
+					max_multi_map: 0,
+					max_bak_map: 0,
+					multi_map_count: 1,
+					map_info: [
+						{ mapFlag: currentMapId, name: `Map ${currentMapId}`, add_time: 0, length: 0, bak_maps: [], rooms: [] },
+					],
+				}),
 			);
+			this.currentMapFallbackDevices.add(duid);
+			expectedMapId = currentMapId;
 		}
+		await this.refreshRoomNamesIfNeeded(
+			duid,
+			rawData.map((entry) => entry[1]),
+			isActive,
+		);
+		if (!isActive()) return undefined;
 		return this.applyRoomMapData(duid, rawData, expectedMapId);
 	}
 
@@ -312,7 +346,12 @@ export class AreaManagementService {
 		this.logger.debug('AreaManagementService - resolveInitialAreas', duid);
 
 		try {
-			const mapInfo = await this.fetchAndApplyMapInfo(duid);
+			let mapInfo: MapInfo | undefined;
+			try {
+				mapInfo = await this.fetchAndApplyMapInfo(duid);
+			} catch (err) {
+				this.logger.warn(`AreaManagementService - map list unavailable for ${duid}: ${String(err)}`);
+			}
 			const originalActiveMapId = await this.fetchAndApplyRoomMap(duid, -1);
 
 			if (this.enableMultipleMap && mapInfo && this.serviceRouting) {
@@ -402,15 +441,20 @@ export class AreaManagementService {
 		if (this.hasPhysicalAreas(duid) || delaysMs.length === 0) {
 			return;
 		}
+		const token = {};
+		this.areaRetryTokens.set(duid, token);
 		const [delay, ...rest] = delaysMs;
 		const handle = setTimeout(() => {
 			this.areaRetryTimers.delete(duid);
-			void this.retryAreaResolution(duid).then((resolved) => {
+			const isActive = () => this.areaRetryTokens.get(duid) === token;
+			void this.retryAreaResolution(duid, isActive).then((resolved) => {
+				if (!isActive()) return;
+				this.areaRetryTokens.delete(duid);
 				if (!resolved && rest.length > 0) {
 					this.scheduleAreaResolutionRetry(duid, rest);
 				} else if (!resolved) {
 					this.logger.warn(
-						`AreaManagementService - rooms still unknown for ${duid} after all retries; is the robot online in this Roborock account/region?`,
+						`AreaManagementService - rooms still unknown for ${duid} after all retries; map-list/room-mapping queries did not resolve physical areas`,
 					);
 				}
 			});
@@ -420,6 +464,7 @@ export class AreaManagementService {
 	}
 
 	public cancelAreaResolutionRetry(duid: string): void {
+		this.areaRetryTokens.delete(duid);
 		const handle = this.areaRetryTimers.get(duid);
 		if (handle) {
 			clearTimeout(handle);
@@ -427,15 +472,19 @@ export class AreaManagementService {
 		}
 	}
 
-	private async retryAreaResolution(duid: string): Promise<boolean> {
+	private async retryAreaResolution(duid: string, isActive: () => boolean): Promise<boolean> {
 		if (this.hasPhysicalAreas(duid)) {
 			return true;
 		}
 		this.logger.info(`AreaManagementService - retrying room mapping for ${duid}`);
 		try {
-			await this.fetchAndApplyMapInfo(duid);
-			if (!this.hasPhysicalAreas(duid)) {
-				await this.fetchAndApplyRoomMap(duid, -1);
+			try {
+				await this.fetchAndApplyMapInfo(duid, isActive);
+			} catch (err) {
+				this.logger.warn(`AreaManagementService - map list unavailable for ${duid}: ${String(err)}`);
+			}
+			if (isActive() && !this.hasPhysicalAreas(duid)) {
+				await this.fetchAndApplyRoomMap(duid, -1, undefined, isActive);
 			}
 		} catch (err) {
 			this.logger.warn(`AreaManagementService - room mapping retry failed for ${duid}: ${String(err)}`);
@@ -455,7 +504,11 @@ export class AreaManagementService {
 	 * Refresh room names from `/user/homes/{homeId}/rooms` when the device reports segment iot ids
 	 * that are missing from the cached home data (same strategy as python-roborock's RoomsTrait).
 	 */
-	private async refreshRoomNamesIfNeeded(duid: string, iotIds: string[]): Promise<void> {
+	private async refreshRoomNamesIfNeeded(
+		duid: string,
+		iotIds: string[],
+		isActive: () => boolean = () => true,
+	): Promise<void> {
 		const homeId = this.deviceHomeIds.get(duid);
 		if (!this.iotApi || homeId === undefined || iotIds.length === 0) {
 			return;
@@ -468,7 +521,7 @@ export class AreaManagementService {
 		unknown.forEach((id) => this.roomNameRefreshAttempted.add(`${duid}:${id}`));
 		try {
 			const rooms = await this.iotApi.getRooms(homeId);
-			if (rooms && rooms.length > 0) {
+			if (isActive() && rooms && rooms.length > 0) {
 				this.logger.debug(`AreaManagementService - refreshed ${rooms.length} room names for ${duid}`);
 				this.deviceRooms.set(duid, rooms);
 			}
@@ -550,7 +603,7 @@ export class AreaManagementService {
 		for (const duid of this.refreshIntervals.keys()) {
 			this.stopPeriodicRefresh(duid);
 		}
-		for (const duid of [...this.areaRetryTimers.keys()]) {
+		for (const duid of [...this.areaRetryTokens.keys()]) {
 			this.cancelAreaResolutionRetry(duid);
 		}
 		this.deviceHomeIds.clear();
@@ -565,6 +618,7 @@ export class AreaManagementService {
 		this.areasListeners.clear();
 		this.deviceRooms.clear();
 		this.mapInfoCache.clear();
+		this.currentMapFallbackDevices.clear();
 		this.v1RoomResolutionCache.clear();
 		this.v1PendingResolution.clear();
 		this.logger.debug('AreaManagementService - All data cleared');

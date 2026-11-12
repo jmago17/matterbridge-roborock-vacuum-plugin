@@ -80,7 +80,10 @@ export class MapInfoListener implements AbstractMessageListener {
 		if (!dps?.result || !isRawRoomMappingData(dps.result)) return;
 
 		this.logger.debug(`[${this.duid}] MapInfoListener: V1 room map push received (${dps.result.length} rooms)`);
-		const storedMapInfo = this.pendingV1MapInfo ?? MapInfo.empty();
+		// Room tuples carry no map identity. The query path can verify the current map;
+		// a bare push must not silently assign those rooms to floor 0.
+		const storedMapInfo = this.pendingV1MapInfo;
+		if (!storedMapInfo?.maps.length) return;
 		const resolvedMapId = storedMapInfo.resolveMapIdForRoomData(dps.result);
 		const roomMappings = HomeModelMapper.rawRoomDataToRoomMappings(
 			dps.result,

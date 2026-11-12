@@ -91,7 +91,7 @@ export class ClientRouter implements Client {
 	}
 
 	public async send(duid: string, request: RequestMessage): Promise<void> {
-		if (request.secure) {
+		if (request.secure || request.forceMqtt) {
 			await this.mqttClient.send(duid, request);
 		} else {
 			await this.getLocalClient(duid).send(duid, request);
@@ -106,13 +106,16 @@ export class ClientRouter implements Client {
 	): Promise<T | undefined> {
 		const listener = new OneShotResponseListener<T>(duid, parseFn, timeoutMs);
 		this.broadcasterFactory.register(listener);
+		// Arm before send: an MQTT reply can arrive before publish's promise resolves.
+		const response = listener.waitFor();
 		try {
-			await this.send(duid, request);
-			return await listener.waitFor();
+			const [, result] = await Promise.all([this.send(duid, request), response]);
+			return result;
 		} catch (error) {
 			this.logger.error(error instanceof Error ? error.message : String(error));
 			return undefined;
 		} finally {
+			listener.cancel();
 			this.broadcasterFactory.deregister(listener);
 		}
 	}

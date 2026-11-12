@@ -46,6 +46,14 @@ export class MessageRoutingService {
 		return this.getMessageDispatcher(duid).switchMap(duid, mapId);
 	}
 
+	public supportsCurrentMapQuery(duid: string): boolean {
+		return this.getMessageDispatcher(duid).getCurrentMapId !== undefined;
+	}
+
+	public async getCurrentMapId(duid: string): Promise<number | undefined> {
+		return this.getMessageDispatcher(duid).getCurrentMapId?.(duid);
+	}
+
 	public getRoomMap(duid: string, activeMap: number): Promise<RawRoomMappingData> {
 		return this.getMessageDispatcher(duid).getRoomMap(duid, activeMap);
 	}

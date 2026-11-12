@@ -8,6 +8,8 @@ export interface ProtocolRequest {
 	protocol?: Protocol;
 	method?: string | undefined;
 	params?: unknown[] | Record<string, unknown> | undefined;
+	/** Route via MQTT without opting into secure/binary map responses. */
+	forceMqtt?: boolean;
 	secure?: boolean;
 	nonce?: number;
 	timestamp?: number;
@@ -22,6 +24,7 @@ export class RequestMessage {
 	public readonly protocol: Protocol;
 	public readonly method: string | undefined;
 	public readonly params: unknown[] | Record<string, unknown> | undefined;
+	public readonly forceMqtt: boolean;
 	public readonly secure: boolean;
 	public readonly timestamp: number;
 	public readonly nonce: number;
@@ -33,6 +36,7 @@ export class RequestMessage {
 		this.protocol = args.protocol ?? Protocol.rpc_request;
 		this.method = args.method;
 		this.params = args.params;
+		this.forceMqtt = args.forceMqtt ?? false;
 		this.secure = args.secure ?? false;
 		this.nonce = args.nonce ?? randomInt(10000, 32767);
 		this.timestamp = args.timestamp ?? Math.floor(Date.now() / 1000);
@@ -61,6 +65,7 @@ export class RequestMessage {
 				method: this.method,
 				params: this.params,
 				secure: this.secure,
+				forceMqtt: this.forceMqtt,
 				dps: this.dps,
 
 				nonce: this.nonce,

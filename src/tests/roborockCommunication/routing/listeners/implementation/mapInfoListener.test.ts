@@ -32,6 +32,15 @@ function makeV1Message(duid: string, result: unknown): ResponseMessage {
 	});
 }
 
+function makeV1MapMessage(): ResponseMessage {
+	return makeV1Message(DUID, {
+		max_multi_map: 1,
+		max_bak_map: 0,
+		multi_map_count: 1,
+		map_info: [{ mapFlag: 0, name: 'Home', rooms: [] }],
+	});
+}
+
 function makeB01Message(duid: string, bodyGetImpl: (key: number) => unknown): ResponseMessage {
 	return makeMessage(duid, () => undefined, bodyGetImpl);
 }
@@ -86,12 +95,18 @@ describe('MapInfoListener', () => {
 				[1, '11100845', 14],
 				[2, '11100849', 9],
 			];
+			await listener.onMessage(makeV1MapMessage());
 			const msg = makeV1Message(DUID, rawData);
 
 			await listener.onMessage(msg);
 
 			expect(areaService.setSupportedAreas).toHaveBeenCalled();
 			expect(areaService.setSupportedAreaIndexMap).toHaveBeenCalled();
+		});
+
+		it('does not guess map 0 for a bare room push without map info', async () => {
+			await listener.onMessage(makeV1Message(DUID, [[1, '11100845', 14]]));
+			expect(areaService.setSupportedAreas).not.toHaveBeenCalled();
 		});
 
 		it('should skip when result is empty array', async () => {
@@ -108,6 +123,7 @@ describe('MapInfoListener', () => {
 
 		it('should fall through to general_response when rpc_response is missing', async () => {
 			const rawData = [[1, '11100845', 14]];
+			await listener.onMessage(makeV1MapMessage());
 			const msg = makeMessage(DUID, (proto) => {
 				if (proto === Protocol.general_response) return { id: 1, result: rawData };
 				return undefined;
@@ -531,6 +547,7 @@ describe('MapInfoListener', () => {
 		it('should use V10 tag switch for V1 path (tag 14 → Kitchen)', async () => {
 			// Arrange — V1 path: no areaType override, tag comes from raw map data
 			const rawData = [[1, '11100845', 14]];
+			await listener.onMessage(makeV1MapMessage());
 			const msg = makeV1Message(DUID, rawData);
 
 			// Act

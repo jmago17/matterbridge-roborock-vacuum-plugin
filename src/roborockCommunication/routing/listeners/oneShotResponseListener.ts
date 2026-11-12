@@ -30,6 +30,11 @@ export class OneShotResponseListener<T> implements AbstractMessageListener {
 		});
 	}
 
+	public cancel(): void {
+		this.settled = true;
+		if (this.timer) clearTimeout(this.timer);
+	}
+
 	public async onMessage(message: ResponseMessage): Promise<void> {
 		if (this.settled) return;
 		if (message.duid !== this.duid) return;

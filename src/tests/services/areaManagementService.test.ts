@@ -1003,12 +1003,14 @@ describe('AreaManagementService', () => {
 			expect(result.supportedMaps).toEqual([]);
 		});
 
-		it('should log error when getMapInfo fails', async () => {
+		it('should warn when map list fails but still request room mapping', async () => {
 			mockMessageRoutingService.getMapInfo.mockRejectedValue(new Error('Network error'));
+			mockMessageRoutingService.getRoomMap.mockResolvedValue([]);
 
 			await areaService.resolveInitialAreas(mockDeviceId);
 
-			expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('resolveInitialAreas failed'));
+			expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('map list unavailable'));
+			expect(mockMessageRoutingService.getRoomMap).toHaveBeenCalledWith(mockDeviceId, -1);
 		});
 
 		it('should handle undefined serviceRouting gracefully', async () => {
