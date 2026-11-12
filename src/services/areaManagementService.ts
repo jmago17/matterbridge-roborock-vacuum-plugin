@@ -13,6 +13,8 @@ import {
 	toSupportedMaps,
 } from '../initialData/getSupportedAreas.js';
 import { mergeSupportedAreasByMap } from '../initialData/mergeSupportedAreasByMap.js';
+import type { DeviceOverride } from '../model/RoborockPluginPlatformConfig.js';
+import { validateDeviceOverrides } from '../platform/deviceOverrides.js';
 import { RoborockIoTApi } from '../roborockCommunication/api/iotClient.js';
 import { HomeModelMapper, RawRoomMappingData, RoomDto } from '../roborockCommunication/models/home/index.js';
 import { Scene } from '../roborockCommunication/models/index.js';
@@ -44,6 +46,66 @@ export class AreaManagementService {
 	private areaRetryTokens = new Map<string, object>();
 	private deviceHomeIds = new Map<string, number>();
 	private roomNameRefreshAttempted = new Set<string>();
+
+	private deviceOverrides = new Map<string, DeviceOverride>();
+
+	public setDeviceOverride(duid: string, override: DeviceOverride): void {
+		validateDeviceOverrides([override]);
+		this.deviceOverrides.set(duid, override);
+	}
+
+	private configuredRoomName(duid: string, segmentId: number, mapId: number | null): string | undefined {
+		const names = this.deviceOverrides.get(duid)?.roomNames ?? [];
+		// Exact map wins; mapless names are intentionally single-map only.
+		return (
+			names.find((r) => r.segmentId === segmentId && r.mapId === mapId)?.name ??
+			(!this.enableMultipleMap
+				? names.find((r) => r.segmentId === segmentId && r.mapId === undefined)?.name
+				: undefined)
+		);
+	}
+
+	/** Configured fallback is NOT discovered or verified robot data. Never replace automatic areas. */
+	private applyStaticRoomsFallback(duid: string): void {
+		const fallback = this.deviceOverrides.get(duid)?.staticRooms;
+		if (!fallback || this.hasPhysicalAreas(duid)) return;
+		const knownMaps = this.mapInfoCache.get(duid)?.maps ?? [];
+		if (knownMaps.length && !knownMaps.some((m) => m.id === fallback.mapId)) return;
+		if (!this.enableMultipleMap && knownMaps[0] && knownMaps[0].id !== fallback.mapId) return;
+		const mapInfo = new MapInfo({
+			max_multi_map: 0,
+			max_bak_map: 0,
+			multi_map_count: 1,
+			map_info: [
+				{
+					mapFlag: fallback.mapId,
+					name: fallback.mapName ?? `Configured map ${fallback.mapId}`,
+					add_time: 0,
+					length: 0,
+					bak_maps: [],
+					rooms: [],
+				},
+			],
+		});
+		const mappings = fallback.segmentIds.map((id) => ({
+			id,
+			iot_name_id: `configured-${id}`,
+			tag: 0,
+			iot_map_id: fallback.mapId,
+			iot_name: this.configuredRoomName(duid, id, fallback.mapId) ?? `Configured room ${id}`,
+		}));
+		this.logger.warn(
+			'[AreaManagementService] Publishing explicit configured static rooms; source=configured, NOT discovered/verified',
+		);
+		this.applyAreasResult(
+			duid,
+			getSupportedAreas(
+				new HomeEntity(0, '', new RoomMap(mappings), mapInfo, fallback.mapId),
+				this.logger,
+				this.enableMultipleMap,
+			),
+		);
+	}
 
 	private static readonly V1_SEGMENT_CONFIRMATION_THRESHOLD = 2;
 
@@ -192,6 +254,16 @@ export class AreaManagementService {
 	}
 
 	private applyAreasResult(duid: string, result: SupportedAreasResult, mergeMapId?: number): void {
+		for (const area of result.supportedAreas) {
+			const info = result.roomIndexMap.areaInfo.get(area.areaId);
+			if (!info) continue;
+			const name = this.configuredRoomName(duid, info.roomId, info.mapId);
+			if (!name) continue;
+			if (area.areaInfo.locationInfo) area.areaInfo.locationInfo.locationName = name;
+			info.roomName = name;
+			const segmentInfo = result.roomIndexMap.roomInfo.get(`${info.roomId}-${info.mapId}`);
+			if (segmentInfo) segmentInfo.roomName = name;
+		}
 		this.setSupportedMaps(duid, result.supportedMaps);
 		if (this.enableMultipleMap && mergeMapId !== undefined) {
 			this.mergeSupportedAreasForMap(duid, mergeMapId, result.supportedAreas, result.roomIndexMap);
@@ -381,6 +453,7 @@ export class AreaManagementService {
 			this.logger.error(`AreaManagementService - resolveInitialAreas failed for ${duid}: ${String(err)}`);
 		}
 
+		this.applyStaticRoomsFallback(duid);
 		const supportedAreas = this.getSupportedAreas(duid);
 		const supportedMaps = this.getSupportedMaps(duid);
 
@@ -606,6 +679,7 @@ export class AreaManagementService {
 		for (const duid of [...this.areaRetryTokens.keys()]) {
 			this.cancelAreaResolutionRetry(duid);
 		}
+		this.deviceOverrides.clear();
 		this.deviceHomeIds.clear();
 		this.roomNameRefreshAttempted.clear();
 		this.supportedAreas.clear();

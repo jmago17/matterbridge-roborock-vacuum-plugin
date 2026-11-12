@@ -1,3 +1,139 @@
+# Fork notes: `1.1.9-minis.3` (jmago17)
+
+Branch: `minis/local-ip-rooms-20261112`, based exactly on
+`41bf7c82d5dded8da2dc80a164614233ed937625` (`1.1.9-minis.2`).
+Private fork distribution only. No installation, restart, robot/HA access, npm
+publication, upstream PR or authentication change in this phase.
+
+## 1.1.9-minis.3: manual V1 LAN and configured rooms
+
+- Optional `pluginConfiguration.deviceOverrides[]`, keyed by `serialNumber`,
+  consistent with the existing per-device product-name override. `localIp` is
+  strict IPv4 only (no hostname, URL, port, key or token). Duplicate serials,
+  invalid IPv4, malformed room names/IDs or duplicate scoped segments fail
+  configuration validation; untrusted values are not echoed by the validator.
+- V1 manual IP takes precedence over cached IP and skips `get_network_info`
+  entirely, even with cloud `online:false`. Uses the existing cloud-provided
+  `localKey`, existing hello negotiation, TCP 58867, readiness and reconnection
+  logic. No Xiaomi UDP 54321 token path. Without an override the previous
+  discovery/MQTT-readiness fallback is unchanged. There is still no automatic
+  retry over MQTT after a successfully sent LAN RPC times out.
+- Bounded wire fix: only `V01MessageBodyBuilder` maps outer protocol 4 RPC
+  payloads to DPS 101. Header stays 4. MQTT stays 101/101. Hello/ping, response,
+  secure map security, A01/B01 and the already-correct L01 builder are unchanged.
+  This affects all V1 LAN RPCs, not just this one robot, because the referenced
+  protocol encoders both use DPS 101 independent of the outer RPC transport.
+  References actually inspected at immutable commits:
+  `mathiashornbek/homebridge-roborock-matter`
+  `36c35800cb46335bdaedc5bc868317b0542942b9`,
+  `roborockLib/lib/message.js`, lines 104–113; and
+  `Python-roborock/python-roborock`
+  `ed5f8591cccc204c1643b00b31d52d7ff43cede1`,
+  `roborock/protocols/v1_protocol.py`, `RequestMessage._as_payload`.
+  This supersedes the explicitly deferred DPS-4 limitation in the minis.2 notes.
+- Preserve minis.2 MQTT-forced `get_multi_maps_list` with `params: []`, response
+  listener armed before send, independent room-mapping fallback, verified
+  `get_status` current map (`map_status >>> 2`, including map 0), and retry
+  cancellation. Cloud offline warning no longer asserts a wrong account/region.
+- `roomNames: [{segmentId, mapId?, name}]` only renames matching physical rooms,
+  including live results. It does not create rooms. Exact-map entries take
+  precedence; mapless names are used only with Multiple Maps OFF. IDs stay in
+  the existing `RoomIndexMap`/Matter area-ID space, NOT segment IDs. Unicode
+  names are supported, with a 64 UTF-8 byte limit and no control characters.
+- Optional `staticRooms: {mapId, mapName?, segmentIds}` is an EXPLICIT UNVERIFIED
+  fallback only after automatic startup resolution yields no physical areas.
+  `mapId` is always mandatory, including single-map mode; 0 is valid and 999 is
+  reserved for Routine. Known incompatible map metadata blocks fallback.
+  Segment IDs must be integers 1–255, unique and finite. Fallback uses the same
+  area/index conversion as automatic rooms and logs `source=configured, NOT
+discovered/verified`; it never switches/loads maps. It does not overwrite any
+  valid automatic physical mapping. Once configured rooms exist the existing
+  missing-rooms retry stops; future live automatic mapping can replace them.
+  Removing/changing fallback configuration requires a separately authorized
+  reload/restart. Do not confuse configured data with robot verification.
+- No routine dispatch, endpoint, pairing, persistence, auth, dependency versions,
+  deployment target or permissions changes. Routine map 999 / area 9252134 are
+  preserved. Single-map mode remains recommended; do not enable Multiple Maps
+  for diagnosis because its pre-existing flow may switch robot maps.
+
+### Configuration example (merge; do not replace authentication)
+
+Replace `YOUR_ROBOT_SERIAL` with the serial already available in the plugin,
+not a DUID, token or local key. No actual serial or DUID is included here.
+
+```json
+{
+  "pluginConfiguration": {
+    "enableMultipleMap": false,
+    "sanitizeSensitiveLogs": true,
+    "deviceOverrides": [{
+      "serialNumber": "YOUR_ROBOT_SERIAL",
+      "localIp": "192.168.31.116",
+      "roomNames": [
+        {"segmentId": 16, "mapId": 0, "name": "Juegos"},
+        {"segmentId": 17, "mapId": 0, "name": "Dormitorio"},
+        {"segmentId": 18, "mapId": 0, "name": "Logela"},
+        {"segmentId": 19, "mapId": 0, "name": "Cocina"},
+        {"segmentId": 20, "mapId": 0, "name": "Salón"},
+        {"segmentId": 21, "mapId": 0, "name": "Pasillo"},
+        {"segmentId": 22, "mapId": 0, "name": "Baño2"},
+        {"segmentId": 23, "mapId": 0, "name": "Baño1"}
+      ]
+    }]
+  }
+}
+```
+
+Only if explicit configured fallback is wanted, add inside that same device:
+
+```json
+"staticRooms": {
+  "mapId": 0,
+  "mapName": "Casa (configurada)",
+  "segmentIds": [16, 17, 18, 19, 20, 21, 22, 23]
+}
+```
+
+Map 0 and these names are supplied configuration/HA metadata, not newly
+verified robot output. No user layout is hardcoded into production code.
+New sanitized source log lines (no IP, serial, DUID or key):
+`[ConnectionService] Using configured V1 LAN address (source: manual override)`
+and `[AreaManagementService] Publishing explicit configured static rooms;
+source=configured, NOT discovered/verified`.
+
+### Validation and limits
+
+Mac LAN, new directory outside iCloud `~/tmp/rrfork-local-ip-20261112`.
+Node 24.22.2 isolated official Darwin arm64 archive (global Node 25.8.1 untouched),
+npm 11.19.1, Matterbridge 3.11.2 linked from `/tmp/mbg/node_modules/matterbridge`.
+Node archive SHA256 `aa9549349e47dffaa42dcf95d6e06ade8c4bdafc980979883b88767670df385a`
+matches official SHASUMS256.txt. `npm ci --ignore-scripts` used unchanged lockfile;
+25 inherited npm audit findings (3 low, 16 moderate, 6 high); no audit fix or
+claim of a full dependency security review.
+
+Offline full suite: **2593 tests / 201 files PASS** (baseline 2548 / 198).
+TypeScript noEmit and build, scoped ESLint and formatting are validated before
+packaging. Additional tests cover invalid config/no sends, device scoping,
+offline manual IP bypass/cache precedence, V1-only override, encrypted LAN
+outer-4/DPS-101 mapping and status with incoming outer-4/DPS-102, wrong-ID
+rejection, map 0, configured/automatic names, static-only-when-empty, Unicode,
+map-specific ambiguity, routine coexistence, exact area-to-segment 16–23
+translation without invoking cleaning, empty selection and shutdown cancellation.
+
+This is NOT a real robot interoperability test or visual Apple Home validation.
+No robot/HA sockets or commands were used. Subsequent authorized read-only
+phase should: keep Multiple Maps OFF; use the EXISTING cloud key/session (never
+log it) and confirmed IP on TCP 58867; inspect `get_room_mapping` and `get_status`
+over LAN, record only method/channel/correlation/result summary; verify map 0
+from raw map_status and match segment/name metadata from existing cloud/HA
+information. Inspect ServiceArea supported maps/areas and index translation,
+routine 999/9252134, endpoint 5 identity and untouched hass endpoint 1. Do not
+start cleaning to test selection. No `app_segment_clean`, execute, routine,
+`load_multi_map`, reset, pairing or login. Installation/restart is a separate
+phase and is NOT authorized by this artifact preparation.
+
+## Historical 1.1.9-minis.2
+
 # Fork notes: `1.1.9-minis.2` (jmago17)
 
 Current branch: `minis/v1-map-transport-20261112`, based on `ed8c7a5`.

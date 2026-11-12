@@ -1,4 +1,4 @@
-import { DpsPayload, MessageContext, RequestMessage } from '../../models/index.js';
+import { DpsPayload, MessageContext, Protocol, RequestMessage } from '../../models/index.js';
 import { AbstractMessageBodyBuilder } from './abstractMessageBodyBuilder.js';
 
 export class V01MessageBodyBuilder implements AbstractMessageBodyBuilder {
@@ -20,7 +20,9 @@ export class V01MessageBodyBuilder implements AbstractMessageBodyBuilder {
 
 		const payload = {
 			dps: {
-				[request.protocol]: JSON.stringify(data),
+				// V1 LAN RPC uses outer protocol 4, but the RPC datapoint is 101.
+				// Do not alter hello/ping, response, A01/B01 or secure map framing.
+				[request.protocol === Protocol.general_request ? Protocol.rpc_request : request.protocol]: JSON.stringify(data),
 			},
 			t: request.timestamp,
 		};

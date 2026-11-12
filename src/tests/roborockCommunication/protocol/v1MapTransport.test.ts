@@ -34,9 +34,9 @@ function harness() {
 	router['mqttClient'] = asType(mqtt);
 	router['localClients'].set(duid, asType(local));
 	const dispatcher = new V10MessageDispatcher(asType(logger), router);
-	async function reply(id: number, result: unknown, target = duid) {
+	async function reply(id: number, result: unknown, target = duid, protocol = Protocol.rpc_response) {
 		const request = new RequestMessage({
-			protocol: Protocol.rpc_response,
+			protocol,
 			body: JSON.stringify({ dps: { 102: JSON.stringify({ id, result }) } }),
 		});
 		const { buffer } = serializer.serialize(duid, request);
@@ -126,13 +126,33 @@ describe('V1 native map transport (no network)', () => {
 		expect(h.mqtt.send).toHaveBeenCalledOnce();
 	});
 
-	it('does not change global LAN DPS semantics or opt forceMqtt into security', () => {
+	it('round-trips encrypted V1 LAN mapping/status with outer 4 / DPS 101 and incoming outer 4 / DPS 102', async () => {
+		const h = harness();
+		h.local.send.mockImplementation(async (_duid, request: RequestMessage) => {
+			const localRequest = request.toLocalRequest('1.0');
+			const { buffer } = h.serializer.serialize(duid, localRequest);
+			expect(buffer.readUInt16BE(15)).toBe(4);
+			const decoded = h.deserializer.deserialize(duid, buffer, 'fixture');
+			const rpc = JSON.parse(decoded.get(Protocol.rpc_request) as string);
+			expect(rpc).toEqual({ id: request.messageId, method: request.method, params: [] });
+			expect(decoded.get(Protocol.general_request)).toBeUndefined();
+			const result = request.method === 'get_status' ? [{ map_status: 0 }] : [[16, 'cloud-room', 0]];
+			await h.reply(request.messageId + 1, result, duid, Protocol.general_request);
+			await h.reply(request.messageId, result, duid, Protocol.general_request);
+		});
+		expect(await h.dispatcher.getRoomMap(duid, -1)).toEqual([[16, 'cloud-room', 0]]);
+		expect(await h.dispatcher.getCurrentMapId(duid)).toBe(0);
+		expect(h.mqtt.send).not.toHaveBeenCalled();
+	});
+
+	it('uses outer 4 / DPS 101 for V1 LAN RPC without changing secure map requests', () => {
 		const context = new MessageContext(user);
 		const builder = new V01MessageBodyBuilder();
 		const request = new RequestMessage({ method: 'get_status', params: [], nonce: 5678 });
 		const local = request.toLocalRequest('1.0');
 		expect(local.protocol).toBe(4);
-		expect(JSON.parse(builder.buildPayload(local, context)).dps['4']).toBeDefined();
+		expect(JSON.parse(builder.buildPayload(local, context)).dps['101']).toBeDefined();
+		expect(JSON.parse(builder.buildPayload(local, context)).dps['4']).toBeUndefined();
 		const secure = new RequestMessage({ method: 'get_map_v1', secure: true, nonce: 5678 });
 		const data = JSON.parse(JSON.parse(builder.buildPayload(secure, context)).dps['101']);
 		expect(data.security).toEqual({ endpoint: context.getEndpoint(), nonce: context.getSerializeNonceAsHex() });

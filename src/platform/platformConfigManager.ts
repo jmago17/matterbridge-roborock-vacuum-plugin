@@ -6,6 +6,7 @@
 import type { AnsiLogger } from 'matterbridge/logger';
 
 import { DEFAULT_REFRESH_INTERVAL_SECONDS } from '../constants/index.js';
+import type { DeviceOverride } from '../model/RoborockPluginPlatformConfig.js';
 import {
 	AdvancedFeatureSetting,
 	CleanModeSettings,
@@ -15,6 +16,7 @@ import {
 	MatterOverrideSettings,
 	RoborockPluginPlatformConfig,
 } from '../model/RoborockPluginPlatformConfig.js';
+import { validateDeviceOverrides } from './deviceOverrides.js';
 
 /**
  * Manages platform configuration with validation and defaults.
@@ -35,7 +37,19 @@ export class PlatformConfigManager {
 		return new PlatformConfigManager(config, log);
 	}
 
+	public getDeviceOverride(serialNumber: string): DeviceOverride | undefined {
+		const overrides = this.config.pluginConfiguration.deviceOverrides;
+		validateDeviceOverrides(overrides);
+		return overrides?.find((entry) => entry.serialNumber === serialNumber);
+	}
+
 	public validateConfig(): boolean {
+		try {
+			validateDeviceOverrides(this.config.pluginConfiguration.deviceOverrides);
+		} catch {
+			this.log.error('Invalid deviceOverrides configuration');
+			return false;
+		}
 		if (!this.config.authentication.username || typeof this.config.authentication.username !== 'string') {
 			return false;
 		}

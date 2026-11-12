@@ -148,6 +148,14 @@ export class ConnectionService {
 			return false;
 		}
 
+		// Validate before registering/sending any local RPC. Cloud online:false is not
+		// evidence that a manually configured V1 LAN address is unreachable.
+		const deviceOverride = this.configManager?.getDeviceOverride(device.serialNumber);
+		if (deviceOverride?.localIp && device.pv !== ProtocolVersion.V1) {
+			throw new Error('localIp override is supported only for Roborock V1');
+		}
+		if (deviceOverride) this.areaManagementService?.setDeviceOverride(device.duid, deviceOverride);
+
 		const deviceSpecs = device.specs;
 		const messageDispatcher = new MessageDispatcherFactory(this.clientRouter, this.logger).getMessageDispatcher(
 			deviceSpecs.protocol,
@@ -239,6 +247,11 @@ export class ConnectionService {
 
 			localNetworkUDPClient.connect();
 			return true;
+		}
+
+		if (deviceOverride?.localIp) {
+			this.logger.notice('[ConnectionService] Using configured V1 LAN address (source: manual override)');
+			return this.setupLocalClient(device, deviceOverride.localIp);
 		}
 
 		// Get device IP address from network info

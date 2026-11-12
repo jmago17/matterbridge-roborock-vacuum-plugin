@@ -104,11 +104,13 @@ export class DeviceConfigurator {
 		roborockService.setDeviceRooms(vacuum.duid, homeData.rooms);
 		roborockService.setDeviceHomeId(vacuum.duid, homeData.id);
 
+		// Cloud data may omit this flag at runtime; preserve the explicit-false check.
+		// eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare
 		if (vacuum.online === false) {
 			this.log.warn(
 				`Device ${vacuum.name} is reported OFFLINE by the Roborock cloud for this account/region. ` +
-					'Map and room queries will time out. If the robot works in the Roborock app, it is probably bound to a ' +
-					'different account or region than the one configured in this plugin.',
+					'Cloud availability does not establish LAN reachability. Configured V1 LAN discovery is still attempted; ' +
+					'MQTT map queries may time out. Do not change account/region based on this flag alone.',
 			);
 		}
 		const homeInfo = new HomeEntity(homeData.id, homeData.name, RoomMap.empty(), MapInfo.empty(), -1);

@@ -16,6 +16,7 @@ export interface AuthenticationConfiguration {
 }
 
 export interface PluginConfiguration {
+	deviceOverrides?: DeviceOverride[];
 	whiteList: string[];
 	enableServerMode: boolean;
 	enableMultipleMap: boolean;
@@ -23,6 +24,22 @@ export interface PluginConfiguration {
 	refreshInterval: number;
 	debug: boolean;
 	unregisterOnShutdown: boolean;
+}
+
+export interface RoomNameOverride {
+	segmentId: number;
+	name: string;
+	/** Required for disambiguation across multiple maps. */
+	mapId?: number;
+}
+
+export interface DeviceOverride {
+	serialNumber: string;
+	/** Roborock V1 TCP address, not a Xiaomi token or URL. IPv4 only. */
+	localIp?: string;
+	roomNames?: RoomNameOverride[];
+	/** Explicit, unverified fallback used only when automatic mapping is empty. */
+	staticRooms?: { mapId: number; mapName?: string; segmentIds: number[] };
 }
 
 export interface AdvancedFeatureConfiguration {
