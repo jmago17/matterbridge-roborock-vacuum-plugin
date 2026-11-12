@@ -11,3 +11,5 @@ src/
 .tarignore
 .claude
 .jscpd.json
+.mcp.json
+logs/

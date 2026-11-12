@@ -51,6 +51,8 @@ discovered/verified`; it never switches/loads maps. It does not overwrite any
   missing-rooms retry stops; future live automatic mapping can replace them.
   Removing/changing fallback configuration requires a separately authorized
   reload/restart. Do not confuse configured data with robot verification.
+- Packaging excludes inherited development `logs/` and `.mcp.json`; neither is
+  runtime input. No repository development log/MCP settings are redistributed.
 - No routine dispatch, endpoint, pairing, persistence, auth, dependency versions,
   deployment target or permissions changes. Routine map 999 / area 9252134 are
   preserved. Single-map mode remains recommended; do not enable Multiple Maps
